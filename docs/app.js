@@ -11,7 +11,7 @@ const App = {
 
 // Поднимается вручную при заметных правках сайта — по нему видно,
 // подхватило ли устройство новую версию. Показывается в «О расписании».
-const SITE_VERSION = 'umpk-v13';
+const SITE_VERSION = 'umpk-v14';
 
 const RECENT_KEY = 'umpk.recent.v1';
 const PINNED_KEY = 'umpk.pinned.v1';
@@ -123,10 +123,22 @@ async function loadData() {
 }
 
 /** 1 — нечётная неделя, 2 — чётная. Отсчёт от первого понедельника из таблиц. */
+/**
+ * Номер недели — из дат, проставленных в самих таблицах.
+ *
+ * Раньше здесь считалась чётность: недели чередовались, первая и третья
+ * были одним и тем же. Колледж выкладывает их иначе — подряд, по листу
+ * на неделю: «1 неделя» 31.08, «2 неделя» 07.09, «3 неделя» 14.09.
+ * Чётность на третьей неделе разошлась с таблицами и называла 14 сентября
+ * первой неделей.
+ *
+ * null — для недели, которой в таблицах ещё нет: угадать её номер нельзя,
+ * и делать вид, что расписание известно, хуже, чем честно сказать.
+ */
 function weekNumber(date) {
-  const anchor = mondayOf(new Date(App.data.anchor_monday + 'T00:00:00'));
-  const delta = Math.round((mondayOf(date) - anchor) / 604800000);
-  return Math.abs(delta) % 2 === 0 ? 1 : 2;
+  const monday = isoDate(mondayOf(date));
+  const found = ((App.data && App.data.weeks) || []).find((item) => item.monday === monday);
+  return found ? found.week : null;
 }
 
 const shortDate = (date) =>
@@ -134,16 +146,13 @@ const shortDate = (date) =>
 
 /**
  * Недели, которые колледж выложил — у них в таблицах проставлены даты.
- * Текущая неделя добавляется всегда, иначе при отставших таблицах сайт
- * показывал бы пары на сегодня, но не давал открыть эту неделю целиком.
+ * Текущей недели среди них может не быть, если таблицы отстали от
+ * календаря: кнопку для неё не рисуем, номер всё равно неизвестен.
+ * currentWeekIndex тогда откроет последнюю выложенную.
  */
 function publishedWeeks() {
   const weeks = new Map();
   for (const item of (App.data && App.data.weeks) || []) weeks.set(item.monday, item.week);
-
-  const today = new Date();
-  const monday = isoDate(mondayOf(today));
-  if (!weeks.has(monday)) weeks.set(monday, App.data ? weekNumber(today) : 1);
 
   return [...weeks.entries()].sort((a, b) => a[0].localeCompare(b[0]))
     .map(([iso, week]) => {
@@ -179,7 +188,10 @@ function scheduleFor(kind, name, start, days) {
       weekday_name: WEEKDAY_NAMES[weekday],
       date_label: dayLabel(day),
       week,
-      lessons: weekday === 7 ? [] : onDay(source, weekday, week),
+      // Недели нет в таблицах — показывать нечего, и «занятий нет» тут
+      // было бы неправдой: они, скорее всего, есть, просто не выложены.
+      published: week !== null,
+      lessons: week === null || weekday === 7 ? [] : onDay(source, weekday, week),
     });
   }
   return { kind, name, found: source.length > 0, days: result };
@@ -471,7 +483,9 @@ function renderHome() {
   const note = document.getElementById('home-note');
   if (App.meta) {
     note.textContent = App.meta.ready
-      ? `Сейчас идёт ${App.meta.current_week}-я неделя`
+      ? (App.meta.current_week
+          ? `Сейчас идёт ${App.meta.current_week}-я неделя`
+          : 'Расписание на эту неделю ещё не выложили')
       : 'Расписание не загрузилось — обновите страницу.';
   }
 
@@ -730,6 +744,15 @@ async function renderSchedule(kind, name) {
     } else if (view === 'week') {
       // Выбирать можно только те недели, которые колледж выложил.
       const list = publishedWeeks();
+      if (!list.length) {
+        // Ни одной недели с датами — открывать нечего. Такое возможно,
+        // если в таблицах не оказалось дат в шапках дней.
+        weekpick.replaceChildren();
+        days.replaceChildren(el('div', 'empty',
+          'Расписание на эту неделю ещё не выложили.'));
+        shareButton.hidden = true;
+        return;
+      }
       if (App.weekIndex === null) App.weekIndex = currentWeekIndex(list);
       App.weekIndex = Math.min(Math.max(App.weekIndex, 0), list.length - 1);
       from = new Date(list[App.weekIndex].monday + 'T00:00:00');
@@ -802,7 +825,8 @@ function renderDays(container, data, view) {
   }
   container.replaceChildren(fragment);
 
-  if (view !== 'week' && !data.days.some((day) => day.lessons.length)) {
+  if (view !== 'week' && data.days.some((day) => day.published)
+      && !data.days.some((day) => day.lessons.length)) {
     container.append(el('div', 'empty', 'Свободный день — занятий нет.'));
   }
 }
@@ -811,13 +835,16 @@ function renderDay(day, isToday, kind) {
   const card = el('article', `day${isToday ? ' day--today' : ''}`);
   const head = el('header', 'day__head');
   head.append(el('span', 'day__name', day.weekday_name));
-  head.append(el('span', 'day__date', `${day.date_label} · ${day.week}-я неделя`));
+  head.append(el('span', 'day__date',
+    day.week ? `${day.date_label} · ${day.week}-я неделя` : day.date_label));
   if (isToday) head.append(el('span', 'day__today', 'сегодня'));
   card.append(head);
 
   if (!day.lessons.length) {
     card.append(el('div', 'day__empty',
-      day.weekday === 7 ? 'Воскресенье — выходной' : 'Занятий нет'));
+      day.weekday === 7 ? 'Воскресенье — выходной'
+        : !day.published ? 'Расписание на эту неделю ещё не выложили'
+        : 'Занятий нет'));
     return card;
   }
 
@@ -1150,8 +1177,8 @@ function renderInfo() {
     ['Периодичность', 'каждые полчаса'],
     ['Групп', String(meta.groups.length)],
     ['Преподавателей', String(meta.teachers.length)],
-    ['Текущая неделя', `${meta.current_week}-я`],
-    ['Отсчёт чётности', meta.anchor_monday],
+    ['Текущая неделя', meta.current_week ? `${meta.current_week}-я` : 'не выложена'],
+    ['Первая неделя семестра', meta.anchor_monday],
   ];
   for (const [term, value] of rows) {
     list.append(el('dt', null, term), el('dd', null, value));

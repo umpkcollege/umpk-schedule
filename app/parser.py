@@ -178,10 +178,15 @@ def _sanitize(data: bytes) -> io.BytesIO:
 
 
 def _week_of_sheet(title: str, total_sheets: int) -> int:
-    """Номер недели по названию листа; 0 — если лист в книге один."""
+    """Номер недели по названию листа; 0 — если лист в книге один.
+
+    Недели идут подряд и нумеруются с начала полугодия: «1 неделя»,
+    «2 неделя», «3 неделя» и дальше. Цифру берём целиком — в семестре
+    их около восемнадцати, и по одной «10 неделя» стала бы первой.
+    """
     if total_sheets < 2:
         return 0
-    match = re.search(r"(\d)", title)
+    match = re.search(r"(\d+)", title)
     return int(match.group(1)) if match else 0
 
 
