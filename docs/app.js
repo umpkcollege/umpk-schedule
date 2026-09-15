@@ -11,7 +11,7 @@ const App = {
 
 // Поднимается вручную при заметных правках сайта — по нему видно,
 // подхватило ли устройство новую версию. Показывается в «О расписании».
-const SITE_VERSION = 'umpk-v14';
+const SITE_VERSION = 'umpk-v15';
 
 const RECENT_KEY = 'umpk.recent.v1';
 const PINNED_KEY = 'umpk.pinned.v1';

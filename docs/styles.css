@@ -637,8 +637,29 @@ button { font: inherit; }
 .footer__inner {
   max-width: 1180px; margin: 0 auto; padding: 18px 16px;
   color: var(--ink-3); font-size: 13px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px 16px;
 }
+.footer__text { min-width: 0; }
 .footer p { margin: 0 0 4px; }
+
+/* Ссылка на исходные таблицы. Кнопкой, а не подчёркнутой строкой: рядом
+   с копирайтом текстовую ссылку взглядом не выцепить. */
+.footer__cloud {
+  flex: none;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 15px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.footer__cloud:hover { color: var(--blue); border-color: var(--blue-600); }
+.footer__cloud svg {
+  flex: none; width: 18px; height: 18px;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
 .footer__meta { color: var(--ink-3); }
 .footer__link { text-decoration: underline; text-underline-offset: 3px; }
 .footer__link:hover { color: var(--blue-600); }

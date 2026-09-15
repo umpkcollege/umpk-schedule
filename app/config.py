@@ -14,6 +14,8 @@ DATA_DIR = BASE_DIR / "data"
 RAW_DIR = DATA_DIR / "raw"          # последние скачанные .xlsx, в репозиторий не идут
 
 # Публичная папка облака Mail.ru со всеми файлами расписания.
+# Тот же адрес зашит в кнопку «Таблицы в облаке» в подвале docs/index.html —
+# меняете папку, поправьте оба места.
 CLOUD_PUBLIC_LINK = os.getenv("UMPK_CLOUD_LINK", "KRh4/Q5UoGDxkv")
 HTTP_TIMEOUT = int(os.getenv("UMPK_HTTP_TIMEOUT", "60"))
 

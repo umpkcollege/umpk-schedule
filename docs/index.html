@@ -16,7 +16,7 @@
 <meta name="apple-mobile-web-app-title" content="Расписание УМПК">
 <meta name="mobile-web-app-capable" content="yes">
 <!-- ?v меняем, когда нужно наверняка выбить старую версию из кэша телефона -->
-<link rel="stylesheet" href="styles.css?v=14">
+<link rel="stylesheet" href="styles.css?v=15">
 <script>
   // Тему ставим до отрисовки, иначе на тёмном экране мигнёт белым.
   try {
@@ -116,11 +116,26 @@
 
 <footer class="footer">
   <div class="footer__inner">
-    <p>© <span id="year"></span> Уфимский многопрофильный профессиональный колледж</p>
-    <p class="footer__meta" id="footer-meta"></p>
+    <div class="footer__text">
+      <p>© <span id="year"></span> Уфимский многопрофильный профессиональный колледж</p>
+      <p class="footer__meta" id="footer-meta"></p>
+    </div>
     <!-- Ссылку на «О расписании» убрали из подвала: студентам она не нужна.
          Страница осталась и открывается по адресу umpksch.ru/#/info —
          там видно, когда собирались данные и что не так с таблицами. -->
+
+    <!-- Та самая папка, из которой сборка забирает таблицы. Адрес продублирован
+         из CLOUD_PUBLIC_LINK в app/config.py: переедет папка — поправить нужно
+         в обоих местах, иначе кнопка поведёт в никуда.
+         Открываем новой вкладкой: из установленного на телефон приложения
+         уход на чужой сайт выглядит как поломка, вернуться назад нечем. -->
+    <a class="footer__cloud" href="https://cloud.mail.ru/public/KRh4/Q5UoGDxkv"
+       target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 18h10.5a3.5 3.5 0 0 0 .4-6.98 5.5 5.5 0 0 0-10.55-1.5A3.75 3.75 0 0 0 7 18Z"/>
+      </svg>
+      Таблицы в облаке
+    </a>
   </div>
 </footer>
 
@@ -224,6 +239,6 @@
   </section>
 </template>
 
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>
