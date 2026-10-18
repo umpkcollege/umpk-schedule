@@ -1316,58 +1316,6 @@ async function start() {
   await route();
 }
 
-/* -------------------------------------------------------- статистика ---- */
-
-// Анонимный счётчик для страницы /admin: случайный номер устройства, без
-// имён, групп и IP. Пока вкладка на экране, раз в минуту сообщаем серверу
-// «я тут» — по этим сигналам он считает, сколько человек на сайте сейчас
-// и сколько заходило за день. Не дошёл сигнал — не страшно, сайт не ждёт.
-const VISITOR_KEY = 'umpk.visitor';
-const HIT_URL = '/api/hit';
-const HIT_EVERY = 60000;
-
-function visitorId() {
-  try {
-    let id = localStorage.getItem(VISITOR_KEY);
-    if (!id || !/^[a-z0-9]{16,40}$/.test(id)) {
-      id = randomId();
-      localStorage.setItem(VISITOR_KEY, id);
-    }
-    return id;
-  } catch {
-    return randomId();   // приватный режим: посчитается как новый человек
-  }
-}
-
-function randomId() {
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function startHits() {
-  const id = visitorId();
-  const send = (bye) => {
-    const body = JSON.stringify(bye ? { v: id, bye: true } : { v: id });
-    // При закрытии вкладки обычный fetch браузер обрывает, sendBeacon — нет.
-    if (bye && navigator.sendBeacon) {
-      navigator.sendBeacon(HIT_URL, new Blob([body], { type: 'application/json' }));
-      return;
-    }
-    fetch(HIT_URL, {
-      method: 'POST', body, keepalive: true,
-      headers: { 'Content-Type': 'application/json' },
-    }).catch(() => { /* нет сети — посчитаем в следующий раз */ });
-  };
-  const ping = () => { if (document.visibilityState === 'visible') send(false); };
-
-  ping();
-  setInterval(ping, HIT_EVERY);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') send(false);
-    else send(true);
-  });
-}
-
 // Нужен для установки сайта как приложения и для работы без сети.
 // Браузеры разрешают service worker только на localhost или по HTTPS.
 if ('serviceWorker' in navigator && window.isSecureContext) {
@@ -1377,4 +1325,3 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 }
 
 start();
-startHits();
