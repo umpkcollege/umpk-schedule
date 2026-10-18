@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Статистика УМПК</title>
+<link rel="icon" href="/assets/favicon.png">
+<style>
+  :root {
+    color-scheme: light;
+    --blue: #1a4ed0;
+    --blue-soft: #c9d6f8;
+    --green: #1f8a3a;
+    --ink: #17233c;
+    --ink-2: #41506d;
+    --ink-3: #7b88a1;
+    --bg: #f4f6f9;
+    --surface: #ffffff;
+    --line: #e3e8f2;
+    --bad: #b3261e;
+    --on-blue: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --blue: #7d9ef5;
+      --blue-soft: #2a3b6a;
+      --green: #6fd08a;
+      --ink: #dfe6f4;
+      --ink-2: #a3b2cb;
+      --ink-3: #6f7d96;
+      --bg: #0f141b;
+      --surface: #161c25;
+      --line: #27303d;
+      --bad: #f09b95;
+      --on-blue: #0d1420;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  header h1 { font-size: 22px; margin: 0; flex: 1; }
+  header img { width: 36px; height: 36px; }
+  .muted { color: var(--ink-3); font-size: 13px; }
+  button {
+    font: inherit; border: 1px solid var(--line); background: var(--surface);
+    color: var(--ink-2); border-radius: 10px; padding: 6px 12px; cursor: pointer;
+  }
+  button.primary { background: var(--blue); border-color: var(--blue); color: var(--on-blue); font-weight: 600; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 16px; padding: 16px 18px;
+  }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .tile .label { color: var(--ink-2); font-size: 13px; }
+  .tile .value { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; margin-top: 4px; }
+  .tile .note { color: var(--ink-3); font-size: 12px; margin-top: 2px; }
+  .online .value { color: var(--green); display: flex; align-items: center; gap: 10px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  h2 { font-size: 16px; margin: 28px 0 10px; }
+  .chart { display: flex; align-items: flex-end; gap: 3px; height: 160px; }
+  .chart .bar {
+    flex: 1; background: var(--blue-soft); border-radius: 4px 4px 0 0;
+    min-height: 2px; position: relative;
+  }
+  .chart .bar.today { background: var(--blue); }
+  .chart .bar:hover { background: var(--blue); }
+  .axis { display: flex; justify-content: space-between; color: var(--ink-3); font-size: 12px; margin-top: 6px; }
+  #tip {
+    position: fixed; pointer-events: none; background: var(--ink); color: var(--bg);
+    font-size: 12px; padding: 6px 8px; border-radius: 8px; display: none; white-space: nowrap;
+  }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--ink-2); font-weight: 600; font-size: 13px; }
+  .table-wrap { overflow-x: auto; }
+  #login { max-width: 340px; margin: 12vh auto 0; }
+  #login h1 { font-size: 20px; margin: 0 0 14px; }
+  #login input {
+    width: 100%; font: inherit; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink); margin-bottom: 10px;
+  }
+  #login button { width: 100%; padding: 10px; }
+  .error { color: var(--bad); font-size: 13px; min-height: 18px; margin-top: 8px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<form id="login" class="card" hidden>
+  <h1>Статистика сайта</h1>
+  <input id="login-name" type="text" placeholder="Логин" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+  <input id="password" type="password" placeholder="Пароль" autocomplete="current-password" required>
+  <button class="primary" type="submit">Войти</button>
+  <div class="error" id="login-error"></div>
+</form>
+
+<main id="panel" hidden>
+  <header>
+    <img src="/assets/icon-192.png" alt="">
+    <h1>Статистика umpksch.ru</h1>
+    <button id="logout" type="button">Выйти</button>
+  </header>
+
+  <div class="tiles">
+    <div class="card tile online">
+      <div class="label">Сейчас на сайте</div>
+      <div class="value"><span class="dot"></span><span id="online">—</span></div>
+      <div class="note" id="peak">&nbsp;</div>
+    </div>
+    <div class="card tile">
+      <div class="label">Сегодня заходило</div>
+      <div class="value" id="today">—</div>
+      <div class="note" id="today-note">&nbsp;</div>
+    </div>
+    <div class="card tile">
+      <div class="label">Вчера</div>
+      <div class="value" id="yesterday">—</div>
+      <div class="note" id="yesterday-note">&nbsp;</div>
+    </div>
+    <div class="card tile">
+      <div class="label">За 7 дней</div>
+      <div class="value" id="week">—</div>
+      <div class="note" id="month">&nbsp;</div>
+    </div>
+  </div>
+
+  <h2>Человек в день за 30 дней</h2>
+  <div class="card">
+    <div class="chart" id="days-chart"></div>
+    <div class="axis"><span id="days-from"></span><span>сегодня</span></div>
+  </div>
+
+  <h2>Заходы сегодня по часам</h2>
+  <div class="card">
+    <div class="chart" id="hours-chart"></div>
+    <div class="axis"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
+  </div>
+
+  <h2>По дням</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>День</th><th>Человек</th><th>Новых</th><th>Заходов</th><th>Пик онлайн</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <p class="muted" id="footer"></p>
+</main>
+
+<div id="tip"></div>
+
+<script>
+'use strict';
+
+// Человек — разное устройство (телефон и компьютер одного студента — двое).
+// Заход — открыл сайт после перерыва больше получаса.
+const REFRESH = 15000;
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => n.toLocaleString('ru-RU');
+let timer = null;
+
+const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+function dayLabel(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  return `${WEEKDAYS[d.getDay()]}, ${d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}`;
+}
+
+function plural(n, one, few, many) {
+  const a = n % 10, b = n % 100;
+  if (a === 1 && b !== 11) return one;
+  if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return few;
+  return many;
+}
+
+async function load() {
+  let response;
+  try {
+    response = await fetch('/api/admin/stats', { cache: 'no-store' });
+  } catch {
+    $('footer').textContent = 'Нет связи с сервером, пробуем снова…';
+    return;
+  }
+  if (response.status === 401) return showLogin();
+  if (!response.ok) {
+    $('footer').textContent = `Сервер ответил ошибкой ${response.status}`;
+    return;
+  }
+  render(await response.json());
+}
+
+function render(s) {
+  $('login').hidden = true;
+  $('panel').hidden = false;
+
+  const today = s.days[s.days.length - 1];
+  const yesterday = s.days[s.days.length - 2];
+
+  $('online').textContent = fmt(s.online);
+  $('peak').textContent = today.peak
+    ? `пик сегодня ${fmt(today.peak)} в ${today.peak_at}` : ' ';
+  $('today').textContent = fmt(today.visitors);
+  $('today-note').textContent = `${fmt(today.new)} впервые · ${fmt(today.visits)} ${plural(today.visits, 'заход', 'захода', 'заходов')}`;
+  $('yesterday').textContent = fmt(yesterday.visitors);
+  $('yesterday-note').textContent = `${fmt(yesterday.visits)} ${plural(yesterday.visits, 'заход', 'захода', 'заходов')} · пик ${fmt(yesterday.peak)}`;
+  $('week').textContent = fmt(s.week_visitors);
+  $('month').textContent = `за 30 дней ${fmt(s.month_visitors)} · всего ${fmt(s.total_visitors)}`;
+
+  bars($('days-chart'), s.days.map((d, i) => ({
+    value: d.visitors,
+    today: i === s.days.length - 1,
+    tip: `${dayLabel(d.day)}: ${fmt(d.visitors)} чел., ${fmt(d.visits)} заходов`,
+  })));
+  $('days-from').textContent = dayLabel(s.days[0].day);
+
+  const hourNow = new Date(s.now).getHours();
+  bars($('hours-chart'), s.hours.map((v, h) => ({
+    value: v,
+    today: h === hourNow,
+    tip: `${String(h).padStart(2, '0')}:00–${String(h).padStart(2, '0')}:59: ${fmt(v)} заходов`,
+  })));
+
+  $('rows').replaceChildren(...s.days.slice().reverse()
+    .filter((d) => d.visits || d.day === today.day)
+    .map((d) => {
+      const tr = document.createElement('tr');
+      [dayLabel(d.day), fmt(d.visitors), fmt(d.new), fmt(d.visits),
+       d.peak ? `${fmt(d.peak)} в ${d.peak_at}` : '—']
+        .forEach((text) => { const td = document.createElement('td'); td.textContent = text; tr.append(td); });
+      return tr;
+    }));
+
+  const since = s.since ? `Считаем с ${dayLabel(s.since)}. ` : '';
+  $('footer').textContent = `${since}Обновлено в ${new Date().toLocaleTimeString('ru-RU')}, обновляется само каждые 15 секунд.`;
+}
+
+function bars(box, items) {
+  const max = Math.max(1, ...items.map((i) => i.value));
+  box.replaceChildren(...items.map((item) => {
+    const bar = document.createElement('div');
+    bar.className = 'bar' + (item.today ? ' today' : '');
+    bar.style.height = `${(item.value / max) * 100}%`;
+    bar.dataset.tip = item.tip;
+    return bar;
+  }));
+}
+
+const tip = $('tip');
+document.addEventListener('pointermove', (e) => {
+  const text = e.target.dataset && e.target.dataset.tip;
+  if (!text) { tip.style.display = 'none'; return; }
+  tip.textContent = text;
+  tip.style.display = 'block';
+  const x = Math.min(e.clientX + 12, window.innerWidth - tip.offsetWidth - 8);
+  tip.style.left = `${Math.max(8, x)}px`;
+  tip.style.top = `${e.clientY - 36}px`;
+});
+
+function showLogin() {
+  $('panel').hidden = true;
+  $('login').hidden = false;
+  $('login-name').focus();
+}
+
+$('login').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('login-error').textContent = '';
+  const response = await fetch('/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login: $('login-name').value.trim(), password: $('password').value }),
+  }).catch(() => null);
+  if (response && response.ok) {
+    $('password').value = '';
+    return load();
+  }
+  const reason = response ? (await response.json().catch(() => ({}))).error : null;
+  $('login-error').textContent = reason === 'blocked'
+    ? 'Слишком много попыток. Подождите 15 минут.'
+    : response ? 'Неверный логин или пароль' : 'Нет связи с сервером';
+});
+
+$('logout').addEventListener('click', async () => {
+  await fetch('/api/admin/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  showLogin();
+});
+
+load();
+timer = setInterval(() => { if (document.visibilityState === 'visible') load(); }, REFRESH);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') load(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+# Счётчик посещений и /admin. Установка — см. server/deploy/nginx.conf.
+#
+#   sudo cp server/deploy/umpk-stats.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now umpk-stats
+#   systemctl status umpk-stats
+#
+# Логин и пароль от /admin лежат в /etc/umpk-stats.env — репозиторий
+# публичный, в него они попадать не должны:
+#   ADMIN_LOGIN=...
+#   ADMIN_PASSWORD=...
+#   sudo chmod 600 /etc/umpk-stats.env
+#
+# WorkingDirectory и путь к stats.py — там, куда склонирован репозиторий
+# на сервере. Если он не в /opt/umpk-schedule, поправьте обе строки.
+
+[Unit]
+Description=UMPK schedule visit counter
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/umpk-schedule
+ExecStart=/usr/bin/python3 /opt/umpk-schedule/server/stats.py --db /var/lib/umpk-stats/stats.sqlite3
+EnvironmentFile=/etc/umpk-stats.env
+# Отдельный пользователь без прав, база — в /var/lib/umpk-stats.
+DynamicUser=yes
+StateDirectory=umpk-stats
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
