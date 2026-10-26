@@ -663,6 +663,43 @@ button { font: inherit; }
 .footer__meta { color: var(--ink-3); }
 .footer__link { text-decoration: underline; text-underline-offset: 3px; }
 .footer__link:hover { color: var(--blue-600); }
+.footer__privacy { flex-basis: 100%; font-size: 12px; color: var(--ink-3); }
+.footer__privacy:hover { color: var(--blue-600); text-decoration: underline; }
+.legal__links { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 16px; }
+
+/* -------------------------------------------------- юридические страницы */
+
+.legal__date { margin: -8px 0 16px; color: var(--ink-3); font-size: 14px; }
+.legal__status { font-weight: 600; color: var(--ink) !important; }
+.legal a:not(.back), .consent__text a { color: var(--blue); text-decoration: underline; text-underline-offset: 3px; }
+.legal dl { grid-template-columns: minmax(90px, auto) 1fr; gap: 10px 16px; }
+.legal dd { font-weight: 400; color: var(--ink-2); }
+
+/* ---------------------------------------------------- баннер о cookie --- */
+
+.consent {
+  position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 40;
+  max-width: 720px; margin: 0 auto;
+  padding: 16px 18px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-hover);
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+}
+.consent[hidden] { display: none; }
+.consent__text { flex: 1 1 320px; margin: 0; font-size: 14px; color: var(--ink-2); }
+.consent__actions { display: flex; gap: 10px; flex: none; margin-left: auto; }
+.consent__btn {
+  padding: 10px 18px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: none; color: var(--ink);
+  font: inherit; font-size: 15px; font-weight: 700; cursor: pointer;
+}
+.consent__btn:hover { border-color: var(--blue-600); }
+.consent__btn--yes { background: var(--blue); border-color: var(--blue); color: var(--on-accent); }
+.consent__btn--yes:hover { background: var(--blue-600); }
 
 /* ------------------------------------------------------------ загрузка -- */
 

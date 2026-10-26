@@ -11,7 +11,7 @@ const App = {
 
 // Поднимается вручную при заметных правках сайта — по нему видно,
 // подхватило ли устройство новую версию. Показывается в «О расписании».
-const SITE_VERSION = 'umpk-v16';
+const SITE_VERSION = 'umpk-v17';
 
 const RECENT_KEY = 'umpk.recent.v1';
 const PINNED_KEY = 'umpk.pinned.v1';
@@ -1210,6 +1210,57 @@ function renderInfo() {
 
 }
 
+/* ------------------------------------------------- согласие на cookie --- */
+
+// 'yes' — Метрика разрешена, 'no' — отказ; пусто — человек ещё не решал,
+// и показываем баннер. Сам запуск Метрики — window.startMetrika в index.html.
+const CONSENT_KEY = 'umpk.consent';
+
+function readConsent() {
+  try { return localStorage.getItem(CONSENT_KEY); } catch (e) { return null; }
+}
+
+function setConsent(value) {
+  try { localStorage.setItem(CONSENT_KEY, value); } catch (e) { /* приватный режим */ }
+  document.getElementById('consent').hidden = true;
+  if (value === 'yes') {
+    window.startMetrika();
+    return;
+  }
+  // Отзыв: стираем cookie Метрики (_ym_*) и перезагружаемся, чтобы уже
+  // запущенный счётчик выгрузился из страницы.
+  if (window.ym) {
+    for (const part of document.cookie.split(';')) {
+      const name = part.split('=')[0].trim();
+      if (!name.startsWith('_ym')) continue;
+      for (const domain of ['', location.hostname, '.' + location.hostname]) {
+        document.cookie = `${name}=; max-age=0; path=/` + (domain ? `; domain=${domain}` : '');
+      }
+    }
+    location.reload();
+  }
+}
+
+function initConsent() {
+  document.getElementById('consent').hidden = readConsent() !== null;
+  document.getElementById('consent-yes').addEventListener('click', () => setConsent('yes'));
+  document.getElementById('consent-no').addEventListener('click', () => setConsent('no'));
+}
+
+function renderPrivacy() {
+  App.root.replaceChildren(tpl('tpl-privacy'));
+  const given = readConsent() === 'yes';
+  document.getElementById('consent-status').textContent = given
+    ? 'Сейчас на этом устройстве согласие дано — Яндекс Метрика работает.'
+    : 'Сейчас на этом устройстве согласие не дано — Яндекс Метрика не работает.';
+  const revoke = document.getElementById('consent-revoke');
+  const give = document.getElementById('consent-give');
+  revoke.hidden = !given;
+  give.hidden = given;
+  revoke.addEventListener('click', () => { setConsent('no'); renderPrivacy(); });
+  give.addEventListener('click', () => { setConsent('yes'); renderPrivacy(); });
+}
+
 /* ---------------------------------------------------------- маршруты ---- */
 
 async function route() {
@@ -1224,6 +1275,8 @@ async function route() {
     case 'teacher': return renderPicker('teacher');
     case 'rooms': return renderPicker('room');
     case 'info': return renderInfo();
+    case 'privacy': return renderPrivacy();
+    case 'consent': return App.root.replaceChildren(tpl('tpl-consent'));
     case 'g': return renderSchedule('group', decodeURIComponent(parts[1] || ''));
     case 't': return renderSchedule('teacher', decodeURIComponent(parts[1] || ''));
     case 'r': return renderSchedule('room',
@@ -1310,6 +1363,7 @@ async function start() {
   }
   updateFooter();
   updateOffline();
+  initConsent();
   window.addEventListener('hashchange', route);
   window.addEventListener('offline', updateOffline);
   window.addEventListener('online', refresh);
