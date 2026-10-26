@@ -11,7 +11,7 @@ const App = {
 
 // Поднимается вручную при заметных правках сайта — по нему видно,
 // подхватило ли устройство новую версию. Показывается в «О расписании».
-const SITE_VERSION = 'umpk-v19';
+const SITE_VERSION = 'umpk-v20';
 
 const RECENT_KEY = 'umpk.recent.v1';
 const PINNED_KEY = 'umpk.pinned.v1';
@@ -926,7 +926,7 @@ function renderDays(container, data, view) {
 
   const fragment = document.createDocumentFragment();
   for (const day of data.days) {
-    fragment.append(renderDay(day, day.date === todayIso, data.kind));
+    fragment.append(renderDay(day, day.date === todayIso, data.kind, view === 'week'));
   }
   container.replaceChildren(fragment);
 
@@ -936,12 +936,16 @@ function renderDays(container, data, view) {
   }
 }
 
-function renderDay(day, isToday, kind) {
+function renderDay(day, isToday, kind, inWeek = false) {
   const card = el('article', `day${isToday ? ' day--today' : ''}`);
-  const head = el('header', 'day__head');
+  // Один день на экране — шапка в две строки (день и «сегодня», под ними дата),
+  // иначе на телефоне дата с номером недели не влезает. В неделе — одна строка.
+  const head = el('header', `day__head${inWeek ? '' : ' day__head--stacked'}`);
   head.append(el('span', 'day__name', day.weekday_name));
+  // В режиме «Неделя» номер недели уже на выбранной кнопке над днями, а колонки
+  // узкие: с ним «сегодня» не влезало в строку и шапка дня росла вдвое.
   head.append(el('span', 'day__date',
-    day.week ? `${day.date_label} · ${day.week}-я неделя` : day.date_label));
+    day.week && !inWeek ? `${day.date_label} · ${day.week}-я неделя` : day.date_label));
   if (isToday) head.append(el('span', 'day__today', 'сегодня'));
   card.append(head);
 

@@ -492,15 +492,25 @@ button { font: inherit; }
 }
 .day--today { border-color: var(--blue-600); }
 
+/* Шапка дня всегда в одну строку: в узкой колонке дата сокращается
+   многоточием, а «сегодня» не уезжает на вторую строку. */
 .day__head {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
+  display: flex; align-items: center; gap: 8px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-2);
 }
-.day__name { font-size: 17px; font-weight: 800; color: var(--ink); }
-.day__date { color: var(--ink-3); font-size: 14px; }
+.day__name { flex: none; font-size: 17px; font-weight: 800; color: var(--ink); }
+.day__date {
+  min-width: 0;
+  color: var(--ink-3); font-size: 14px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.day__head--stacked { flex-wrap: wrap; row-gap: 2px; }
+.day__head--stacked .day__today { order: 1; }
+.day__head--stacked .day__date { order: 2; flex-basis: 100%; white-space: normal; }
 .day__today {
+  flex: none; white-space: nowrap;
   margin-left: auto;
   font-size: 12px; font-weight: 700;
   color: var(--blue); background: var(--blue-100);
