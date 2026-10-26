@@ -550,6 +550,25 @@ button { font: inherit; }
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
   font-size: 14px; color: var(--ink-2);
 }
+/* обед — узкая строка между парами, чтобы не спорить с ними за внимание */
+.lunch {
+  display: grid;
+  grid-template-columns: 62px 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 6px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.lunch__time { white-space: nowrap; font-variant-numeric: tabular-nums; grid-column: 2; grid-row: 1; }
+.lunch__name { font-weight: 700; color: var(--green-ink); grid-column: 1; grid-row: 1; }
+.lunch__name::before { content: "🍽\00a0"; }
+.lunch--now { box-shadow: inset 4px 0 0 var(--green-ink); }
+.lunch--done .lunch__name { color: var(--ink-3); }
+@media (min-width: 640px) { .lunch { grid-template-columns: 70px 1fr; padding: 6px 22px; } }
+
 .lesson__group::before { content: "👥\00a0"; }
 .lesson__teacher::before { content: "👤\00a0"; }
 .lesson__room::before { content: "🚪\00a0"; }

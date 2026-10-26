@@ -11,7 +11,7 @@ const App = {
 
 // Поднимается вручную при заметных правках сайта — по нему видно,
 // подхватило ли устройство новую версию. Показывается в «О расписании».
-const SITE_VERSION = 'umpk-v17';
+const SITE_VERSION = 'umpk-v18';
 
 const RECENT_KEY = 'umpk.recent.v1';
 const PINNED_KEY = 'umpk.pinned.v1';
@@ -619,7 +619,8 @@ function groupedByBuilding(keys) {
     buckets.get(building).push(key);
   }
   const fragment = document.createDocumentFragment();
-  for (const [building, rooms] of [...buckets].sort((a, b) => a[0] - b[0])) {
+  // Второй корпус сверху: в нём больше аудиторий, и ищут их чаще.
+  for (const [building, rooms] of [...buckets].sort((a, b) => b[0] - a[0])) {
     const wrap = el('div', 'result-group');
     wrap.append(el('h2', 'result-group__title', `${building} корпус`));
     const items = el('div', 'result-group__items');
@@ -808,6 +809,14 @@ function renderWeekPicker(box, list, active, onPick) {
     });
     return button;
   }));
+  // На телефоне в ряд влезают две-три недели, а открыта обычно текущая —
+  // ближе к концу ряда. Прокручиваем ряд к ней, иначе видно только первые.
+  // Через scrollLeft, а не scrollIntoView: тот дёрнул бы и всю страницу.
+  const current = box.children[active];
+  if (current) {
+    const shift = current.getBoundingClientRect().left - box.getBoundingClientRect().left;
+    box.scrollLeft += shift - (box.clientWidth - current.offsetWidth) / 2;
+  }
 }
 
 function renderDays(container, data, view) {
@@ -849,10 +858,42 @@ function renderDay(day, isToday, kind) {
   }
 
   const nowMinutes = isToday ? currentMinutes() : -1;
+  let previous = null;
   for (const lesson of day.lessons) {
+    const lunch = previous && lunchBetween(previous, lesson);
+    if (lunch) card.append(renderLunch(lunch, nowMinutes));
     card.append(renderLesson(lesson, nowMinutes, kind));
+    previous = lesson;
   }
   return card;
+}
+
+// Перерыв между соседними парами от стольких минут — это обед, а не перемена.
+// По звонкам в будни таких два: между 4-й и 5-й парой (11:45–12:25)
+// и между 8-й и 9-й (15:40–16:05); в субботу один — между 4-й и 5-й
+// (11:25–11:45). Обычные перемены — 5 минут.
+const LUNCH_MIN_MINUTES = 20;
+
+/** Обед между двумя занятиями подряд: [начало, конец] в минутах или null. */
+function lunchBetween(before, after) {
+  // Только между соседними парами: если между ними окно, обед в него уже входит.
+  if (after.pair !== before.pair + 1) return null;
+  const a = lessonRange(before.time);
+  const b = lessonRange(after.time);
+  if (!a || !b || b[0] - a[1] < LUNCH_MIN_MINUTES) return null;
+  return [a[1], b[0]];
+}
+
+function renderLunch([start, end], nowMinutes) {
+  const clock = (minutes) =>
+    `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+  const isNow = nowMinutes >= start && nowMinutes < end;
+  const isDone = nowMinutes >= 0 && nowMinutes >= end;
+  const row = el('div',
+    `lunch${isNow ? ' lunch--now' : ''}${isDone ? ' lunch--done' : ''}`);
+  row.append(el('span', 'lunch__time', `${clock(start)} – ${clock(end)}`));
+  row.append(el('span', 'lunch__name', 'Обед'));
+  return row;
 }
 
 function currentMinutes() {
