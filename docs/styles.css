@@ -550,6 +550,41 @@ button { font: inherit; }
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
   font-size: 14px; color: var(--ink-2);
 }
+/* Свободные аудитории — под общим списком кабинетов, отдельным разделом
+   с линией сверху. Плитки те же, что в списке, только компактнее
+   и с зелёной точкой «свободно». */
+.free {
+  margin-top: 36px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+.free__head { margin-bottom: 16px; }
+.free__title { margin: 0 0 4px; font-size: 20px; font-weight: 800; color: var(--ink); }
+.free__status { margin: 0; font-size: 14px; color: var(--ink-3); }
+.free__pairs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.free__pair {
+  min-width: 40px; height: 40px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--ink-2);
+  font: inherit; font-weight: 700; cursor: pointer;
+}
+.free__pair:hover { border-color: var(--blue-600); color: var(--blue); }
+.free__pair.is-active { background: var(--blue); border-color: var(--blue); color: var(--on-accent); }
+.free__list { display: grid; gap: 22px; }
+/* Плитки по ширине текста, а не сеткой: «3 этаж 15» в узкой клетке
+   переносился бы на две строки и ломал ряд. */
+.free .result-group__items { display: flex; flex-wrap: wrap; gap: 8px; }
+.free .pill {
+  min-width: 88px; padding: 10px 14px;
+  display: flex; align-items: center; gap: 8px;
+  white-space: nowrap;
+}
+.free .pill::before {
+  content: ""; flex: none;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green-ink);
+}
+
 /* обед — узкая строка между парами, чтобы не спорить с ними за внимание */
 .lunch {
   display: grid;

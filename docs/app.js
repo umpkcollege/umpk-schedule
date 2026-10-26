@@ -11,7 +11,7 @@ const App = {
 
 // Поднимается вручную при заметных правках сайта — по нему видно,
 // подхватило ли устройство новую версию. Показывается в «О расписании».
-const SITE_VERSION = 'umpk-v18';
+const SITE_VERSION = 'umpk-v19';
 
 const RECENT_KEY = 'umpk.recent.v1';
 const PINNED_KEY = 'umpk.pinned.v1';
@@ -574,7 +574,103 @@ function renderPicker(kind) {
 
   input.addEventListener('input', draw);
   draw();
+  // Под общим списком: сначала то, за чем пришли, — поиск кабинета.
+  if (kind === 'room' && App.data) {
+    results.after(renderFreeRooms());
+  }
   if (window.matchMedia('(min-width: 900px)').matches) input.focus();
+}
+
+/* ------------------------------------------------ свободные аудитории --- */
+
+/** Звонки дня недели по самим занятиям: [[номер пары, «08:30–09:15»], …]. */
+function bellsFor(weekday) {
+  const bells = new Map();
+  for (const lesson of App.data.lessons) {
+    // Нулевая пара — «Разговоры о важном», кабинет на неё ищут не здесь.
+    if (lesson.weekday !== weekday || lesson.pair < 1 || bells.has(lesson.pair)) continue;
+    if (lessonRange(lesson.time)) bells.set(lesson.pair, lesson.time);
+  }
+  return [...bells].sort((a, b) => a[0] - b[0]);
+}
+
+/**
+ * Какие кабинеты свободны на паре сегодня.
+ *
+ * Кабинетом считаем только тот, где на этой неделе вообще есть занятия:
+ * иначе в «свободные» попали бы залы и комнаты, которые в таблицах
+ * встретились раз за семестр, и список забился бы ими.
+ */
+function freeRoomsAt(date, pair) {
+  const week = weekNumber(date);
+  const free = [];
+  for (const key of roomList()) {
+    const lessons = App.data.byRoom.get(key);
+    if (!lessons.some((l) => l.week === 0 || l.week === week)) continue;
+    const today = scheduleFor('room', key, date, 1).days[0].lessons;
+    if (!today.some((l) => l.pair === pair)) free.push(key);
+  }
+  return free;
+}
+
+function renderFreeRooms() {
+  const box = el('section', 'free');
+  const head = el('div', 'free__head');
+  head.append(el('h2', 'free__title', 'Свободные аудитории'));
+  const status = el('p', 'free__status');
+  head.append(status);
+  box.append(head);
+
+  const now = new Date();
+  const weekday = ((now.getDay() + 6) % 7) + 1;
+  if (weekday === 7 || weekNumber(now) === null) {
+    status.textContent = weekday === 7
+      ? 'Сегодня воскресенье — занятий нет.'
+      : 'Расписание на эту неделю ещё не выложили.';
+    return box;
+  }
+
+  const bells = bellsFor(weekday);
+  const minutes = currentMinutes();
+  // Сейчас идёт пара — она; перемена или утро — ближайшая следующая.
+  // Пары кончились — открываем первую: так видно, что свободно с утра.
+  const upcoming = bells.find(([, time]) => lessonRange(time)[1] >= minutes);
+
+  const pairs = el('div', 'free__pairs');
+  const list = el('div', 'free__list');
+  box.append(pairs, list);
+
+  const show = (pair) => {
+    const time = bells.find(([number]) => number === pair)[1];
+    const range = lessonRange(time);
+    const isNow = minutes >= range[0] && minutes <= range[1];
+    const isNext = upcoming && upcoming[0] === pair && !isNow;
+    const prefix = isNow ? 'Сейчас идёт ' : isNext ? 'Следующий — '
+      : minutes > range[1] ? 'Уже прошёл — ' : '';
+    status.textContent = `${prefix}${pair} урок, ${time.replace(/[-–—]/, ' – ')}`;
+    for (const button of pairs.children) {
+      button.classList.toggle('is-active', Number(button.dataset.pair) === pair);
+    }
+
+    const free = freeRoomsAt(now, pair);
+    if (!free.length) {
+      list.replaceChildren(el('div', 'empty', 'На этой паре заняты все аудитории.'));
+      return;
+    }
+    // Тот же вид, что у списка ниже: по корпусам, второй сверху.
+    list.replaceChildren(groupedByBuilding(free));
+  };
+
+  for (const [pair] of bells) {
+    const button = el('button', 'free__pair', `${pair}`);
+    button.type = 'button';
+    button.dataset.pair = pair;
+    button.title = `${pair} урок`;
+    button.addEventListener('click', () => show(pair));
+    pairs.append(button);
+  }
+  show(upcoming ? upcoming[0] : bells[0][0]);
+  return box;
 }
 
 function renderRecent(kind) {
@@ -884,9 +980,12 @@ function lunchBetween(before, after) {
   return [a[1], b[0]];
 }
 
+/** 765 -> «12:45». */
+const clockLabel = (minutes) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
 function renderLunch([start, end], nowMinutes) {
-  const clock = (minutes) =>
-    `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+  const clock = clockLabel;
   const isNow = nowMinutes >= start && nowMinutes < end;
   const isDone = nowMinutes >= 0 && nowMinutes >= end;
   const row = el('div',
@@ -952,7 +1051,12 @@ function drawDay(day, title, kind) {
   const textWidth = W - textLeft - PAD;
 
   // Первый проход — считаем высоту, чтобы не резать содержимое.
-  const rows = lessons.map((l) => {
+  // Обед — такая же строка, как на экране, только узкая.
+  const LUNCH_HEIGHT = 40;
+  const rows = [];
+  lessons.forEach((l, index) => {
+    const lunch = index > 0 && lunchBetween(lessons[index - 1], l);
+    if (lunch) rows.push({ lunch, height: LUNCH_HEIGHT });
     const subject = wrap(l.subject, textWidth, 21, 700);
     const meta = [
       kind !== 'group' && l.group,
@@ -960,10 +1064,10 @@ function drawDay(day, title, kind) {
       l.room && kind !== 'room' && 'ауд. ' + l.room,
       l.subgroup && `${l.subgroup}-я подгруппа`,
     ].filter(Boolean).join('   ');
-    return {
+    rows.push({
       lesson: l, subject, meta,
       height: subject.length * 27 + (meta ? 26 : 4) + 22,
-    };
+    });
   });
 
   const headHeight = 132;
@@ -1006,6 +1110,19 @@ function drawDay(day, title, kind) {
   }
 
   for (const row of rows) {
+    if (row.lunch) {
+      // Полоса чуть выше прошлой разделительной линии и до следующей.
+      ctx.fillStyle = '#f5f7fb';
+      ctx.fillRect(PAD - 12, y - 11, W - 2 * PAD + 24, row.height);
+      ctx.fillStyle = '#1f6e2b';
+      ctx.font = font(16, 700);
+      ctx.fillText('Обед', PAD, y + 15);
+      ctx.fillStyle = '#7b88a1';
+      ctx.font = font(16);
+      ctx.fillText(row.lunch.map(clockLabel).join(' – '), textLeft, y + 15);
+      y += row.height;
+      continue;
+    }
     const [start, end] = row.lesson.time.split(/[-–—]/).map((p) => p.trim());
 
     ctx.fillStyle = '#17233c';

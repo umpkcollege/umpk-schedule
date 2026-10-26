@@ -70,6 +70,12 @@ def group_spec(group: str) -> str:
     return match.group(1) if match else group.strip()
 
 
+def canonical_room(room: str) -> str:
+    """Одно написание для одного помещения: «Акт. зал» и «акт. зал» — одно."""
+    room = room.strip()
+    return ROOM_RENAMES.get(re.sub(r"[\s.]", "", room).lower(), room)
+
+
 def split_place(group: str, room: str) -> tuple[int, str]:
     """Корпус и номер кабинета.
 
@@ -79,11 +85,10 @@ def split_place(group: str, room: str) -> tuple[int, str]:
     в чужом здании. «2 корпус» без номера оставляет кабинет пустым: здание
     известно, комната нет.
     """
-    room = ROOM_RENAMES.get(room.strip(), room.strip())
+    room = canonical_room(room)
     mark = BUILDING_MARK_RE.match(room)
     if mark:
-        tail = room[mark.end():].strip()
-        return int(mark.group(1)), ROOM_RENAMES.get(tail, tail)
+        return int(mark.group(1)), canonical_room(room[mark.end():])
     spec = group_spec(group)
     if spec in FIRST_BUILDING_SPECS:
         return 1, room

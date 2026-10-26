@@ -2,7 +2,7 @@
    Работает только на localhost или по HTTPS — так устроены браузеры. */
 'use strict';
 
-const CACHE = 'umpk-v18';
+const CACHE = 'umpk-v19';
 
 // Сколько ждать сеть, прежде чем показать сохранённую копию. Нужен потому,
 // что «интернета нет» и «сеть не отвечает» — разные вещи: при выключенном
@@ -12,8 +12,8 @@ const NETWORK_TIMEOUT = 5000;
 const SHELL = [
   './',
   'index.html',
-  'styles.css?v=17',
-  'app.js?v=18',
+  'styles.css?v=18',
+  'app.js?v=19',
   'manifest.webmanifest',
   // Само расписание: без него офлайн открылся бы пустой сайт.
   'data/schedule.json',
