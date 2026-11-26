@@ -63,7 +63,7 @@ def main() -> int:
         return 1
 
     groups = sorted({l.group for l in lessons})
-    teachers = sorted({l.teacher for l in lessons if l.teacher})
+    teachers = sorted({name for lesson in lessons for name in lesson.teachers})
     print(f"\nИтого: {len(lessons)} занятий, {len(groups)} групп, "
           f"{len(teachers)} преподавателей")
 
@@ -113,7 +113,7 @@ def main() -> int:
     print(f"Без аудитории: {len(no_room)} из {len(lessons)}"
           + (f" (из них {only_building} — «2 корпус» без номера комнаты)"
              if only_building else ""))
-    print(f"Без преподавателя: {sum(1 for l in lessons if not l.teacher and l.pair)} "
+    print(f"Без преподавателя: {sum(1 for l in lessons if not l.teachers and l.pair)} "
           f"(не считая классных часов)")
 
     if problems:

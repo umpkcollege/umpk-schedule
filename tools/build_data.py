@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -44,6 +45,8 @@ def collect() -> dict:
         RAW_DIR.mkdir(parents=True, exist_ok=True)
         (RAW_DIR / meta.name).write_bytes(data)
         result = parse_workbook(data, meta.name)
+        if not result.lessons:
+            raise RuntimeError(f"{meta.name}: не разобрано ни одного занятия")
 
         lessons.extend(
             {k: v for k, v in l.as_dict().items() if k != "source"}
@@ -51,7 +54,7 @@ def collect() -> dict:
         )
         groups.extend(result.groups)
         warnings.extend(result.warnings)
-        teachers.update(l.teacher for l in result.lessons if l.teacher)
+        teachers.update(name for lesson in result.lessons for name in lesson.teachers)
         if result.anchor and (anchor is None or result.anchor < anchor):
             anchor = result.anchor
         for monday, week in result.mondays.items():
@@ -67,6 +70,20 @@ def collect() -> dict:
 
     if not lessons:
         raise RuntimeError("Файлы скачаны, но ни одного занятия не разобрано")
+
+    # Листы без времени могут использовать звонки из других книг на ту же
+    # неделю и день, если во всех найденных записях указан один интервал.
+    times = defaultdict(set)
+    for lesson in lessons:
+        if lesson["time"]:
+            key = lesson["week"], lesson["weekday"], lesson["pair"]
+            times[key].add(lesson["time"])
+    for lesson in lessons:
+        if not lesson["time"]:
+            key = lesson["week"], lesson["weekday"], lesson["pair"]
+            known = times.get(key, ())
+            if len(known) == 1:
+                lesson["time"] = next(iter(known))
 
     return {
         # Дата сборки, а не время: файл коммитится в репозиторий, точное

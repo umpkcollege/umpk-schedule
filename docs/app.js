@@ -11,7 +11,7 @@ const App = {
 
 // Поднимается вручную при заметных правках сайта — по нему видно,
 // подхватило ли устройство новую версию. Показывается в «О расписании».
-const SITE_VERSION = 'umpk-v20';
+const SITE_VERSION = 'umpk-v24';
 
 const RECENT_KEY = 'umpk.recent.v1';
 const PINNED_KEY = 'umpk.pinned.v1';
@@ -94,6 +94,8 @@ const WEEKDAY_NAMES = {
   4: 'Четверг', 5: 'Пятница', 6: 'Суббота', 7: 'Воскресенье',
 };
 
+const lessonTeachers = (lesson) => lesson.teachers || (lesson.teacher ? [lesson.teacher] : []);
+
 /**
  * Читает расписание одним файлом и раскладывает по группам и преподавателям.
  * Сервер не нужен: весь семестр — около 50 КБ в сжатом виде.
@@ -116,7 +118,7 @@ async function loadData() {
 
   for (const lesson of data.lessons) {
     put(data.byGroup, lesson.group, lesson);
-    if (lesson.teacher) put(data.byTeacher, lesson.teacher, lesson);
+    for (const teacher of lessonTeachers(lesson)) put(data.byTeacher, teacher, lesson);
     if (lesson.room) put(data.byRoom, roomKey(lesson.building, lesson.room), lesson);
   }
   return data;
@@ -261,24 +263,41 @@ function compareRooms(a, b) {
 
 const roomList = () => (App.data ? [...App.data.byRoom.keys()].sort(compareRooms) : []);
 
-function readRecent() {
+function resolveTeacherName(name) {
+  const teachers = App.data?.byTeacher;
+  if (!teachers || teachers.has(name)) return name;
+  const withPeriod = name + '.';
+  return teachers.has(withPeriod) ? withPeriod : name;
+}
+
+function readSavedSchedules(key) {
   try {
-    const stored = JSON.parse(localStorage.getItem(RECENT_KEY));
-    return Array.isArray(stored) ? stored : [];
+    const stored = JSON.parse(localStorage.getItem(key));
+    if (!Array.isArray(stored)) return [];
+
+    const teachers = new Set();
+    const schedules = [];
+    for (const item of stored) {
+      if (item.kind !== 'teacher') {
+        schedules.push(item);
+        continue;
+      }
+      const name = resolveTeacherName(item.name);
+      if (teachers.has(name)) continue;
+      teachers.add(name);
+      schedules.push({ ...item, name });
+    }
+    return schedules;
   } catch { return []; }
 }
+
+const readRecent = () => readSavedSchedules(RECENT_KEY);
+const readPinned = () => readSavedSchedules(PINNED_KEY);
 
 function pushRecent(kind, name) {
   const list = readRecent().filter((item) => !(item.kind === kind && item.name === name));
   list.unshift({ kind, name });
   try { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, MAX_RECENT))); } catch { /* приватный режим */ }
-}
-
-function readPinned() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(PINNED_KEY));
-    return Array.isArray(stored) ? stored : [];
-  } catch { return []; }
 }
 
 const isPinned = (kind, name) =>
@@ -583,15 +602,18 @@ function renderPicker(kind) {
 
 /* ------------------------------------------------ свободные аудитории --- */
 
-/** Звонки дня недели по самим занятиям: [[номер пары, «08:30–09:15»], …]. */
-function bellsFor(weekday) {
+/** Номера уроков на сегодня и известное время звонков. */
+function bellsFor(weekday, week) {
   const bells = new Map();
   for (const lesson of App.data.lessons) {
     // Нулевая пара — «Разговоры о важном», кабинет на неё ищут не здесь.
-    if (lesson.weekday !== weekday || lesson.pair < 1 || bells.has(lesson.pair)) continue;
-    if (lessonRange(lesson.time)) bells.set(lesson.pair, lesson.time);
+    if (lesson.weekday !== weekday || lesson.pair < 1 || (lesson.week !== week && lesson.week !== 0)) continue;
+    if (!bells.has(lesson.pair)) bells.set(lesson.pair, new Set());
+    if (lessonRange(lesson.time)) bells.get(lesson.pair).add(lesson.time);
   }
-  return [...bells].sort((a, b) => a[0] - b[0]);
+  return [...bells]
+    .map(([pair, times]) => [pair, times.size === 1 ? times.values().next().value : ''])
+    .sort((a, b) => a[0] - b[0]);
 }
 
 /**
@@ -623,18 +645,23 @@ function renderFreeRooms() {
 
   const now = new Date();
   const weekday = ((now.getDay() + 6) % 7) + 1;
-  if (weekday === 7 || weekNumber(now) === null) {
+  const week = weekNumber(now);
+  if (weekday === 7 || week === null) {
     status.textContent = weekday === 7
       ? 'Сегодня воскресенье — занятий нет.'
       : 'Расписание на эту неделю ещё не выложили.';
     return box;
   }
 
-  const bells = bellsFor(weekday);
+  const bells = bellsFor(weekday, week);
+  if (!bells.length) {
+    status.textContent = 'Сегодня занятий нет.';
+    return box;
+  }
   const minutes = currentMinutes();
   // Сейчас идёт пара — она; перемена или утро — ближайшая следующая.
   // Пары кончились — открываем первую: так видно, что свободно с утра.
-  const upcoming = bells.find(([, time]) => lessonRange(time)[1] >= minutes);
+  const upcoming = bells.find(([, time]) => lessonRange(time)?.[1] >= minutes);
 
   const pairs = el('div', 'free__pairs');
   const list = el('div', 'free__list');
@@ -643,11 +670,12 @@ function renderFreeRooms() {
   const show = (pair) => {
     const time = bells.find(([number]) => number === pair)[1];
     const range = lessonRange(time);
-    const isNow = minutes >= range[0] && minutes <= range[1];
+    const isNow = range && minutes >= range[0] && minutes <= range[1];
     const isNext = upcoming && upcoming[0] === pair && !isNow;
     const prefix = isNow ? 'Сейчас идёт ' : isNext ? 'Следующий — '
-      : minutes > range[1] ? 'Уже прошёл — ' : '';
-    status.textContent = `${prefix}${pair} урок, ${time.replace(/[-–—]/, ' – ')}`;
+      : range && minutes > range[1] ? 'Уже прошёл — ' : '';
+    const timeLabel = time ? `, ${time.replace(/[-–—]/, ' – ')}` : '';
+    status.textContent = `${prefix}${pair} урок${timeLabel}`;
     for (const button of pairs.children) {
       button.classList.toggle('is-active', Number(button.dataset.pair) === pair);
     }
@@ -771,7 +799,7 @@ async function renderSchedule(kind, name) {
   backLink.href = BACK_LINKS[kind].href;
   backLink.textContent = BACK_LINKS[kind].text;
 
-  pushRecent(kind, name);
+  if (kind !== 'teacher' || App.data?.byTeacher.has(name)) pushRecent(kind, name);
 
   const tabs = [...App.root.querySelectorAll('.tab')];
   const weekpick = document.getElementById('weekpick');
@@ -936,6 +964,29 @@ function renderDays(container, data, view) {
   }
 }
 
+const isReplacement = (lesson) => /^Замена(?:[.\s]|$)/i.test(lesson.note);
+
+function dayLessonCards(lessons) {
+  const cards = [];
+  for (let start = 0; start < lessons.length;) {
+    const pair = lessons[start].pair;
+    let end = start + 1;
+    while (end < lessons.length && lessons[end].pair === pair) end++;
+    const entries = lessons.slice(start, end);
+    if (pair && entries.some(isReplacement) && entries.some((lesson) => !isReplacement(lesson))) {
+      cards.push(entries);
+    } else {
+      for (const lesson of entries) cards.push([lesson]);
+    }
+    start = end;
+  }
+  return cards.map((entries, index) => {
+    const previous = cards[index - 1];
+    const lunch = previous ? lunchBetween(previous[previous.length - 1], entries[0]) : null;
+    return { entries, lunch };
+  });
+}
+
 function renderDay(day, isToday, kind, inWeek = false) {
   const card = el('article', `day${isToday ? ' day--today' : ''}`);
   // Один день на экране — шапка в две строки (день и «сегодня», под ними дата),
@@ -958,12 +1009,9 @@ function renderDay(day, isToday, kind, inWeek = false) {
   }
 
   const nowMinutes = isToday ? currentMinutes() : -1;
-  let previous = null;
-  for (const lesson of day.lessons) {
-    const lunch = previous && lunchBetween(previous, lesson);
+  for (const { entries, lunch } of dayLessonCards(day.lessons)) {
     if (lunch) card.append(renderLunch(lunch, nowMinutes));
-    card.append(renderLesson(lesson, nowMinutes, kind));
-    previous = lesson;
+    card.append(renderLessonCard(entries, nowMinutes, kind));
   }
   return card;
 }
@@ -974,27 +1022,24 @@ function renderDay(day, isToday, kind, inWeek = false) {
 // (11:25–11:45). Обычные перемены — 5 минут.
 const LUNCH_MIN_MINUTES = 20;
 
-/** Обед между двумя занятиями подряд: [начало, конец] в минутах или null. */
+/** Обед по отметке в таблице или по интервалу между уроками. */
 function lunchBetween(before, after) {
   // Только между соседними парами: если между ними окно, обед в него уже входит.
   if (after.pair !== before.pair + 1) return null;
   const a = lessonRange(before.time);
   const b = lessonRange(after.time);
-  if (!a || !b || b[0] - a[1] < LUNCH_MIN_MINUTES) return null;
-  return [a[1], b[0]];
+  const range = a && b && b[0] > a[1] ? [a[1], b[0]] : null;
+  if (before.lunch_after || (range && range[1] - range[0] >= LUNCH_MIN_MINUTES)) {
+    return { range };
+  }
+  return null;
 }
 
-/** 765 -> «12:45». */
-const clockLabel = (minutes) =>
-  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
-
-function renderLunch([start, end], nowMinutes) {
-  const clock = clockLabel;
-  const isNow = nowMinutes >= start && nowMinutes < end;
-  const isDone = nowMinutes >= 0 && nowMinutes >= end;
+function renderLunch({ range }, nowMinutes) {
+  const isNow = range && nowMinutes >= range[0] && nowMinutes < range[1];
+  const isDone = range && nowMinutes >= range[1];
   const row = el('div',
     `lunch${isNow ? ' lunch--now' : ''}${isDone ? ' lunch--done' : ''}`);
-  row.append(el('span', 'lunch__time', `${clock(start)} – ${clock(end)}`));
   row.append(el('span', 'lunch__name', 'Обед'));
   return row;
 }
@@ -1050,7 +1095,6 @@ function drawDay(day, title, kind) {
     return lines;
   };
 
-  const lessons = day.lessons;
   const textLeft = PAD + 96;
   const textWidth = W - textLeft - PAD;
 
@@ -1058,21 +1102,26 @@ function drawDay(day, title, kind) {
   // Обед — такая же строка, как на экране, только узкая.
   const LUNCH_HEIGHT = 40;
   const rows = [];
-  lessons.forEach((l, index) => {
-    const lunch = index > 0 && lunchBetween(lessons[index - 1], l);
+  for (const { entries, lunch } of dayLessonCards(day.lessons)) {
     if (lunch) rows.push({ lunch, height: LUNCH_HEIGHT });
-    const subject = wrap(l.subject, textWidth, 21, 700);
-    const meta = [
-      kind !== 'group' && l.group,
-      kind !== 'teacher' && l.teacher,
-      l.room && kind !== 'room' && 'ауд. ' + l.room,
-      l.subgroup && `${l.subgroup}-я подгруппа`,
-    ].filter(Boolean).join('   ');
-    rows.push({
-      lesson: l, subject, meta,
-      height: subject.length * 27 + (meta ? 26 : 4) + 22,
+    entries.forEach((lesson, index) => {
+      const subject = wrap(lesson.subject, textWidth, 21, 700);
+      const meta = wrap([
+        kind !== 'group' && lesson.group,
+        kind !== 'teacher' && lessonTeachers(lesson).join(', '),
+        lesson.room && kind !== 'room' && 'ауд. ' + lesson.room,
+        lesson.subgroup && `${lesson.subgroup}-я подгруппа`,
+        isReplacement(lesson) && lesson.note,
+      ].filter(Boolean).join('   '), textWidth, 17, 400);
+      rows.push({
+        pair: index === 0 ? lesson.pair : 0,
+        endOfCard: index === entries.length - 1,
+        subject,
+        meta,
+        height: subject.length * 27 + meta.length * 22 + 26,
+      });
     });
-  });
+  }
 
   const headHeight = 132;
   const footHeight = 54;
@@ -1121,41 +1170,34 @@ function drawDay(day, title, kind) {
       ctx.fillStyle = '#1f6e2b';
       ctx.font = font(16, 700);
       ctx.fillText('Обед', PAD, y + 15);
-      ctx.fillStyle = '#7b88a1';
-      ctx.font = font(16);
-      ctx.fillText(row.lunch.map(clockLabel).join(' – '), textLeft, y + 15);
       y += row.height;
       continue;
     }
-    const [start, end] = row.lesson.time.split(/[-–—]/).map((p) => p.trim());
-
     ctx.fillStyle = '#17233c';
     ctx.font = font(21, 700);
-    ctx.fillText(start, PAD, y + 21);
-    ctx.fillStyle = '#7b88a1';
-    ctx.font = font(17);
-    if (end) ctx.fillText(end, PAD, y + 44);
+    if (row.pair) ctx.fillText(`${row.pair} урок`, PAD, y + 21);
 
-    ctx.fillStyle = '#17233c';
-    ctx.font = font(21, 700);
     let ty = y + 21;
     for (const line of row.subject) {
       ctx.fillText(line, textLeft, ty);
       ty += 27;
     }
 
-    if (row.meta) {
-      ctx.fillStyle = '#41506d';
-      ctx.font = font(17);
-      ctx.fillText(row.meta, textLeft, ty + 2);
+    ctx.fillStyle = '#41506d';
+    ctx.font = font(17);
+    for (const line of row.meta) {
+      ctx.fillText(line, textLeft, ty + 2);
+      ty += 22;
     }
 
     y += row.height;
-    ctx.strokeStyle = '#eef1f7';
-    ctx.beginPath();
-    ctx.moveTo(PAD, y - 11);
-    ctx.lineTo(W - PAD, y - 11);
-    ctx.stroke();
+    if (row.endOfCard) {
+      ctx.strokeStyle = '#eef1f7';
+      ctx.beginPath();
+      ctx.moveTo(PAD, y - 11);
+      ctx.lineTo(W - PAD, y - 11);
+      ctx.stroke();
+    }
   }
 
   ctx.fillStyle = '#7b88a1';
@@ -1202,30 +1244,37 @@ function awayBuilding(lesson) {
 }
 
 
-function renderLesson(lesson, nowMinutes, kind) {
+function renderLessonCard(lessons, nowMinutes, kind) {
   // nowMinutes < 0 — день не сегодняшний, отмечать нечего.
-  const range = lessonRange(lesson.time);
-  const isNow = range && nowMinutes >= range[0] && nowMinutes <= range[1];
-  const isDone = range && nowMinutes >= 0 && nowMinutes > range[1];
+  const ranges = lessons.map((lesson) => lessonRange(lesson.time));
+  const isNow = ranges.some((range) => range && nowMinutes >= range[0] && nowMinutes <= range[1]);
+  const isDone = nowMinutes >= 0 && ranges.every((range) => range && nowMinutes > range[1]);
 
   const row = el('div',
     `lesson${isNow ? ' lesson--now' : ''}${isDone ? ' lesson--done' : ''}`);
 
-  const [start, end] = lesson.time.split(/[-–—]/).map((part) => part.trim());
   const slot = el('div', 'lesson__slot');
-  slot.append(el('span', 'lesson__start', start));
-  if (end) slot.append(el('span', 'lesson__end', end));
-  if (lesson.pair) slot.append(el('span', 'lesson__pair', `${lesson.pair} урок`));
-  row.append(slot);
+  const { pair } = lessons[0];
+  if (pair) slot.append(el('span', 'lesson__pair', `${pair} урок`));
 
-  const body = el('div');
+  const entries = el('div');
+  for (const lesson of lessons) entries.append(renderLessonDetails(lesson, kind));
+  row.append(slot, entries);
+  return row;
+}
+
+function renderLessonDetails(lesson, kind) {
+  const body = el('div', 'lesson__entry');
   body.append(el('div', 'lesson__subject', lesson.subject));
 
   const meta = el('div', 'lesson__meta');
   // Не повторяем то, что написано в заголовке экрана: на странице группы
   // не нужна группа, на странице преподавателя — фамилия, в кабинете — номер.
   if (kind !== 'group') meta.append(el('span', 'lesson__group', lesson.group));
-  if (lesson.teacher && kind !== 'teacher') meta.append(el('span', 'lesson__teacher', lesson.teacher));
+  const teachers = lessonTeachers(lesson);
+  if (teachers.length && kind !== 'teacher') {
+    meta.append(el('span', 'lesson__teacher', teachers.join(', ')));
+  }
   if (lesson.room && kind !== 'room') meta.append(el('span', 'lesson__room', lesson.room));
   // Корпус пишем только когда он чужой для группы — так же, как это делают
   // в самих таблицах. Писать его у каждой пары значило бы зашумить экран
@@ -1237,9 +1286,7 @@ function renderLesson(lesson, nowMinutes, kind) {
   if (lesson.note) meta.append(el('span', 'badge badge--note', lesson.note));
 
   if (meta.childNodes.length) body.append(meta);
-
-  row.append(body);
-  return row;
+  return body;
 }
 
 /* --------------------------------------------------------------- инфо --- */
@@ -1440,7 +1487,12 @@ async function route() {
     case 'privacy': return renderPrivacy();
     case 'consent': return App.root.replaceChildren(tpl('tpl-consent'));
     case 'g': return renderSchedule('group', decodeURIComponent(parts[1] || ''));
-    case 't': return renderSchedule('teacher', decodeURIComponent(parts[1] || ''));
+    case 't': {
+      const requestedName = decodeURIComponent(parts[1] || '');
+      const name = resolveTeacherName(requestedName);
+      if (name !== requestedName) history.replaceState(null, '', routeFor('teacher', name));
+      return renderSchedule('teacher', name);
+    }
     case 'r': return renderSchedule('room',
       roomKey(Number(parts[1]) || 1, decodeURIComponent(parts[2] || '')));
     default: return renderHome();

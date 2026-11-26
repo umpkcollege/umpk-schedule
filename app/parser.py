@@ -1,18 +1,18 @@
 """Разбор excel-таблиц расписания УМПК в плоский список занятий.
 
-Формат исходников (одинаковый во всех пяти файлах):
+Форматы исходников отличаются наличием столбца «Время»:
 
     строка 1        заголовок «Расписание занятий на … уч.год»
     строка 4        имена групп; каждая группа занимает 4 столбца
     строка 5        номера подгрупп: c и c+1 — первая, c+2 и c+3 — вторая
     столбец A       «Понедельник  31.08» — объединён на все строки дня
-    столбец B / C   номер пары и время
+    столбец B       номер пары
+    столбец C       время либо начало первой группы
     строка пары     дисциплина (объединена) + аудитория в c+3
     следующая       преподаватель
 
-Лист «1 неделя» — нечётные недели, «2 неделя» — чётные. Даты в шапке дня
-нужны только чтобы вычислить точку отсчёта чётности; сами занятия
-привязываются к дню недели и чётности, а не к конкретной дате.
+Название листа задаёт номер или диапазон недель. По датам в шапках дней
+сопоставляем номера недель с календарём.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import io
 import logging
 import re
 import zipfile
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 
 import openpyxl
@@ -48,11 +48,16 @@ GROUP_BLOCK = 4                    # столбцов на одну группу
 GROUP_MARKER = "Группа:"           # служебный столбец-повтор справа
 TIME_RE = re.compile(r"^\s*(\d{1,2}[:.]\d{2})\s*[-–—]\s*(\d{1,2}[:.]\d{2})\s*$")
 DATE_RE = re.compile(r"(\d{1,2})\.(\d{1,2})")
-# «Иванов И.И.», «Иванов-Петров И.», «Иванова Мария И.И.»
-TEACHER_RE = re.compile(
-    r"^[А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ][а-яё\-]+)?\s+[А-ЯЁ]\.(?:\s*[А-ЯЁ]\.)?$"
+WEEK_RANGE_RE = re.compile(
+    r"^\s*(\d+)(?:\s+недел[яиюь])?\s*[-–—]\s*(\d+)\s+недел[яиюь](?=\s*(?:$|\())",
+    re.IGNORECASE,
 )
-SUBSTITUTE_RE = re.compile(r"^\s*замена\s*[:\-]?\s*", re.IGNORECASE)
+TEACHER_RE = re.compile(
+    r"(?P<name>[А-ЯЁ][а-яё]+(?:-[А-ЯЁа-яё][а-яё]+)*(?:\s+[А-ЯЁ][а-яё-]+)?)"
+    r"\s*(?P<first>[А-ЯЁ])(?:[.,]\s*(?P<second>[А-ЯЁ]))?\.?"
+    r"(?=\s|[,;/&]|$)"
+)
+SUBSTITUTE_RE = re.compile(r"^зам(?:ена|нена)\b\s*[:\-]?\s*", re.IGNORECASE)
 # openpyxl падает на объединениях вида «1:1» (целая строка), которые
 # встречаются в некоторых файлах — вырезаем их до разбора.
 BAD_MERGE_RE = re.compile(
@@ -103,17 +108,18 @@ def building_of_group(group: str) -> int:
 @dataclass(frozen=True)
 class Lesson:
     group: str
-    week: int          # 1 — нечётная неделя, 2 — чётная, 0 — каждую неделю
+    week: int          # номер недели, 0 — каждую неделю
     weekday: int       # 1 = понедельник … 6 = суббота
     pair: int          # 0 — «Разговоры о важном», далее 1..12
     time: str
     subject: str
-    teacher: str = ""
+    teachers: tuple[str, ...] = ()
     room: str = ""
     subgroup: int | None = None
     note: str = ""     # «Замена» или текст из строки преподавателя, не похожий на ФИО
     source: str = ""
     building: int = 0  # 1 или 2; выводится из группы и пометки в клетке
+    lunch_after: bool = False
 
     def __post_init__(self):
         # Корпус и кабинет — одно целое, и разбирать их порознь в каждом месте,
@@ -123,7 +129,13 @@ class Lesson:
         object.__setattr__(self, "room", room)
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        data["teacher"] = self.teachers[0] if self.teachers else ""
+        if len(self.teachers) < 2:
+            del data["teachers"]
+        if not self.lunch_after:
+            del data["lunch_after"]
+        return data
 
 
 def natural_group_key(name: str) -> tuple:
@@ -141,31 +153,26 @@ def _clean(value) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def normalize_teacher(raw: str) -> tuple[str, str]:
-    """Приводит содержимое строки «Преподаватель» к паре (ФИО, примечание).
-
-    В исходных таблицах встречаются опечатки («Суфиянова А,З.»), пометки
-    о заменах («замена Иванов И.И.») и случайно попавшие названия дисциплин —
-    последние в поле преподавателя не показываем.
-    """
+def normalize_teachers(raw: str) -> tuple[tuple[str, ...], str]:
+    """Читает имена преподавателей и пометку из одной ячейки."""
     text = _clean(raw)
-    if not text:
-        return "", ""
+    substitute = SUBSTITUTE_RE.match(text)
+    note = "Замена" if substitute else ""
+    if substitute:
+        text = text[substitute.end():]
 
-    note = ""
-    if SUBSTITUTE_RE.match(text):
-        note = "Замена"
-        text = SUBSTITUTE_RE.sub("", text)
+    remaining = text
+    teachers: list[str] = []
+    while match := TEACHER_RE.match(remaining):
+        name = f"{match['name']} {match['first']}."
+        if match["second"]:
+            name += f"{match['second']}."
+        teachers.append(name)
+        remaining = remaining[match.end():].lstrip(" ,;/&")
 
-    text = text.replace(",", ".")
-    text = re.sub(r"\.\s+(?=[А-ЯЁ]\.)", ".", text)     # «Иванов И. И.» -> «Иванов И.И.»
-    text = re.sub(r"\s+", " ", text).strip()
-    if re.match(r"^[А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ][а-яё\-]+)?\s+[А-ЯЁ](\.[А-ЯЁ])?$", text):
-        text += "."                                    # «Иванов А.А» -> «Иванов А.А.»
-
-    if TEACHER_RE.match(text):
-        return text, note
-    return "", (f"{note}. {text}".strip(". ") if note else text)
+    if teachers and remaining.casefold().rstrip(".") in ("", "пз", "лз", "лр"):
+        return tuple(dict.fromkeys(teachers)), ". ".join(filter(None, (note, remaining)))
+    return (), ". ".join(filter(None, (note, text)))
 
 
 def _sanitize(data: bytes) -> io.BytesIO:
@@ -182,28 +189,39 @@ def _sanitize(data: bytes) -> io.BytesIO:
     return buffer
 
 
-def _week_of_sheet(title: str, total_sheets: int) -> int:
-    """Номер недели по названию листа; 0 — если лист в книге один.
+def _weeks_of_sheet(title: str, total_sheets: int) -> tuple[int, ...]:
+    """Номера недель по названию листа; 0 — повторяющийся лист.
 
     Недели идут подряд и нумеруются с начала полугодия: «1 неделя»,
     «2 неделя», «3 неделя» и дальше. Цифру берём целиком — в семестре
     их около восемнадцати, и по одной «10 неделя» стала бы первой.
     """
+    if span := WEEK_RANGE_RE.match(title):
+        first, last = map(int, span.groups())
+        if first < 1 or last < first or last > 53:
+            raise ValueError(f"Некорректный диапазон недель в названии «{title}»")
+        return tuple(range(first, last + 1))
     if total_sheets < 2:
-        return 0
+        return (0,)
     match = re.search(r"(\d+)", title)
-    return int(match.group(1)) if match else 0
+    return (int(match.group(1)) if match else 0,)
 
 
-def _header_row(ws) -> int | None:
+def _sheet_layout(ws) -> tuple[int, int] | None:
+    """Возвращает строку заголовка и начальный столбец групп."""
     for row in range(1, 13):
         if _clean(ws.cell(row, 3).value) == GROUP_MARKER:
-            return row
+            return row, 4
+        marker = _clean(ws.cell(row, 2).value)
+        if marker == GROUP_MARKER:
+            return row, 3
+        if marker == "№" and row > 1 and _clean(ws.cell(row - 1, 3).value).casefold() == "преподаватель":
+            return row, 3
     return None
 
 
-def _group_columns(ws, header_row: int, warnings: list[str]) -> list[tuple[int, str]]:
-    """Столбцы групп: шаг 4 начиная с D, до служебного повтора «Группа:».
+def _group_columns(ws, header_row: int, first_group: int, warnings: list[str]) -> list[tuple[int, str]]:
+    """Столбцы групп: шаг 4 начиная с C или D, до служебного повтора «Группа:».
 
     Если в одном листе одинаковое имя встречается дважды (опечатка в исходнике),
     второй столбец получает суффикс, иначе занятия двух групп смешаются.
@@ -212,7 +230,7 @@ def _group_columns(ws, header_row: int, warnings: list[str]) -> list[tuple[int, 
     seen: dict[str, int] = {}
     blanks = 0
     limit = min(ws.max_column, 600)
-    for column in range(4, limit + 1, GROUP_BLOCK):
+    for column in range(first_group, limit + 1, GROUP_BLOCK):
         name = _clean(ws.cell(header_row, column).value)
         if name == GROUP_MARKER:
             break
@@ -289,20 +307,24 @@ def _merge_map(ws) -> dict[tuple[int, int], int]:
     return {(m.min_row, m.min_col): m.max_col for m in ws.merged_cells.ranges}
 
 
-def _lesson_rows(ws, first: int, last: int) -> list[tuple[int, int, str]]:
-    """Строки занятий внутри дня: (строка, номер пары, время)."""
-    rows: list[tuple[int, int, str]] = []
+def _lesson_rows(ws, first: int, last: int, has_time: bool) -> list[tuple[int, int, str, bool]]:
+    """Строки занятий: строка, номер, время и отметка обеда после урока."""
+    rows: list[tuple[int, int, str, bool]] = []
     for row in range(first, last + 1):
-        raw_time = _clean(ws.cell(row, 3).value)
-        if not raw_time or raw_time.lower().startswith("обед"):
-            continue
-        match = TIME_RE.match(raw_time)
-        if not match:
-            continue
         raw_pair = _clean(ws.cell(row, 2).value)
         pair = int(raw_pair) if raw_pair.isdigit() else 0
-        start, end = _time(match.group(1)), _time(match.group(2))
-        rows.append((row, pair, f"{start}–{end}"))
+        if has_time:
+            match = TIME_RE.fullmatch(_clean(ws.cell(row, 3).value))
+            if not match:
+                continue
+            start, end = (_time(value) for value in match.groups())
+            rows.append((row, pair, f"{start}–{end}", False))
+        elif raw_pair.isdigit() or (row == first and not raw_pair):
+            # У «Разговоров о важном» в начале дня номер может быть пустым.
+            rows.append((row, pair, "", False))
+        elif raw_pair.casefold() == "обед" and rows:
+            previous_row, previous_pair, _, _ = rows[-1]
+            rows[-1] = (previous_row, previous_pair, "", True)
     return rows
 
 
@@ -313,7 +335,7 @@ def _time(raw: str) -> str:
 
 
 def _read_cell(ws, merges, row, column, group, week, weekday, pair, time,
-               source, teacher_row: int | None) -> list[Lesson]:
+               source, teacher_row: int | None, lunch_after: bool) -> list[Lesson]:
     """Одна клетка расписания: занятие на всю группу либо две подгруппы."""
     def value(r: int | None, c: int) -> str:
         return _clean(ws.cell(r, c).value) if r else ""
@@ -327,12 +349,13 @@ def _read_cell(ws, merges, row, column, group, week, weekday, pair, time,
             subject = value(row, column + offset)
             if not subject:
                 continue
-            teacher, note = normalize_teacher(
+            teachers, note = normalize_teachers(
                 value(teacher_row, column + offset) or value(teacher_row, column)
             )
             result.append(
-                Lesson(group, week, weekday, pair, time, subject, teacher,
-                       value(row, column + offset + 1), subgroup, note, source)
+                Lesson(group, week, weekday, pair, time, subject, teachers,
+                       value(row, column + offset + 1), subgroup, note, source,
+                       lunch_after=lunch_after)
             )
         return result
 
@@ -346,9 +369,9 @@ def _read_cell(ws, merges, row, column, group, week, weekday, pair, time,
     else:
         subgroup, room = _narrow_cell(ws, merges, row, column, teacher_row, value)
 
-    teacher, note = normalize_teacher(value(teacher_row, column))
+    teachers, note = normalize_teachers(value(teacher_row, column))
     return [Lesson(group, week, weekday, pair, time, first_subject,
-                   teacher, room, subgroup, note, source)]
+                   teachers, room, subgroup, note, source, lunch_after=lunch_after)]
 
 
 def _narrow_cell(ws, merges, row, column, teacher_row, value) -> tuple[int | None, str]:
@@ -388,30 +411,36 @@ def _sheets_to_read(workbook, warnings: list[str], source: str) -> list:
     лишнюю вкладку нужно удалить в самой таблице.
     """
     sheets = list(workbook.worksheets)
-    total = len(sheets)
+    weeks_by_sheet = [(ws, _weeks_of_sheet(ws.title, len(sheets))) for ws in sheets]
+    has_numbered = any(weeks[0] > 0 for _, weeks in weeks_by_sheet)
     chosen: dict[int, object] = {}
     skipped: list[tuple[str, str]] = []
 
-    for ws in sheets:
-        week = _week_of_sheet(ws.title, total)
-        previous = chosen.get(week)
-        if previous is None:
-            chosen[week] = ws
+    for ws, weeks in weeks_by_sheet:
+        if has_numbered and weeks == (0,) and _clean(ws.title).casefold() == "неделя":
+            warnings.append(f"{source}: пропущен лист «{ws.title}» без номера недели.")
             continue
-        if SHEET_PREFERENCE == "last":
-            chosen[week] = ws
-            skipped.append((previous.title, ws.title))
-        else:
-            skipped.append((ws.title, previous.title))
+        for week in weeks:
+            previous = chosen.get(week)
+            if previous is None:
+                chosen[week] = ws
+            elif SHEET_PREFERENCE == "last":
+                chosen[week] = ws
+                skipped.append((previous.title, ws.title))
+            else:
+                skipped.append((ws.title, previous.title))
 
-    for ignored, used in skipped:
+    for ignored, used in dict.fromkeys(skipped):
         warnings.append(
             f"{source}: листы «{ignored}» и «{used}» относятся к одной неделе. "
             f"Взят «{used}», «{ignored}» пропущен — иначе пары задвоились бы. "
             f"Лишнюю вкладку стоит удалить в самой таблице."
         )
 
-    return [ws for _, ws in sorted(chosen.items())]
+    selected = {}
+    for week, ws in sorted(chosen.items()):
+        selected.setdefault(ws, []).append(week)
+    return list(selected.items())
 
 
 @dataclass
@@ -435,16 +464,20 @@ def parse_workbook(data: bytes, source: str) -> ParseResult:
     mondays: dict[date, int] = {}
     sheet_count = len(workbook.worksheets)
 
-    for ws in _sheets_to_read(workbook, warnings, source):
-        header_row = _header_row(ws)
-        if header_row is None:
-            message = f"{source} / {ws.title}: не найдена строка с названиями групп"
-            log.warning(message)
-            warnings.append(message)
+    for ws, weeks in _sheets_to_read(workbook, warnings, source):
+        blocks = _day_blocks(ws)
+        if not blocks:
             continue
+        layout = _sheet_layout(ws)
+        if layout is None:
+            message = f"{source} / {ws.title}: не найдена строка с названиями групп"
+            raise ValueError(message)
 
-        week = _week_of_sheet(ws.title, sheet_count)
-        groups = _group_columns(ws, header_row, warnings)
+        header_row, first_group = layout
+        first_week = _weeks_of_sheet(ws.title, sheet_count)[0]
+        groups = _group_columns(ws, header_row, first_group, warnings)
+        if not groups:
+            raise ValueError(f"{source} / {ws.title}: в шапке нет групп")
         merges = _merge_map(ws)
         for _, name in groups:
             if name not in group_names:
@@ -458,23 +491,26 @@ def parse_workbook(data: bytes, source: str) -> ParseResult:
                     log.warning(message)
                     warnings.append(message)
 
-        for first, last, weekday, day in _day_blocks(ws):
+        for first, last, weekday, day in blocks:
             if day:
                 monday = day - timedelta(days=weekday - 1)
-                mondays.setdefault(monday, week)
-                if weekday == 1 and week in (0, 1) and (anchor is None or day < anchor):
-                    anchor = day
+                for covered_week in weeks:
+                    covered_monday = monday + timedelta(weeks=covered_week - first_week)
+                    mondays.setdefault(covered_monday, covered_week)
+                    if weekday == 1 and covered_week in (0, 1) and (anchor is None or covered_monday < anchor):
+                        anchor = covered_monday
 
-            rows = _lesson_rows(ws, first, last)
-            occupied = {row for row, _, _ in rows}
-            for row, pair, time in rows:
+            rows = _lesson_rows(ws, first, last, has_time=first_group == 4)
+            occupied = {row for row, _, _, _ in rows}
+            for row, pair, time, lunch_after in rows:
                 # Обычно под дисциплиной идёт строка преподавателя. Исключение —
                 # «Разговоры о важном» в 8:00: сразу под ней начинается первая пара.
                 teacher_row = row + 1 if (row + 1) not in occupied else None
-                for column, group in groups:
-                    lessons.extend(
-                        _read_cell(ws, merges, row, column, group,
-                                   week, weekday, pair, time, source, teacher_row)
-                    )
+                for week in weeks:
+                    for column, group in groups:
+                        lessons.extend(
+                            _read_cell(ws, merges, row, column, group,
+                                       week, weekday, pair, time, source, teacher_row, lunch_after)
+                        )
 
     return ParseResult(lessons, group_names, anchor, warnings, mondays)
